@@ -1,0 +1,88 @@
+name: Minecraft Server 1.21.5
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write  # Needed to commit changes
+
+concurrency:
+  group: mc-server
+  cancel-in-progress: true
+
+jobs:
+  run-mc-server:
+    runs-on: ubuntu-latest
+    working-directory: ./smp-data
+    timeout-minutes: 305
+
+    steps:
+    # --- Checkout repo ---
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # --- Setup Playit (Docker) ---
+    - name: Create docker-compose.yml (Playit agent)
+      run: |
+        cat > docker-compose.yml <<'EOF'
+        version: '3'
+        services:
+          playit:
+            image: ghcr.io/playit-cloud/playit-agent:0.15
+            container_name: playit
+            restart: unless-stopped
+            network_mode: host
+            environment:
+              - SECRET_KEY=942d4b95533c47f21962214c3dbadf68ecb82c65f8ff033fcb92077d6392f638
+        EOF
+
+    - name: Start Playit agent
+      run: docker-compose up -d
+
+    # --- Setup Paper server ---
+    - name: Prepare Minecraft Server
+      run: |
+        mkdir -p smp-data/plugins
+        cd smp-data
+        # Always refresh Paper build if missing
+        if [ ! -f server.jar ]; then
+          LATEST_BUILD=$(curl -s https://api.papermc.io/v2/projects/paper/versions/1.21.5 | jq -r '.builds[-1]')
+          curl -L -o server.jar https://api.papermc.io/v2/projects/paper/versions/1.21.5/builds/$LATEST_BUILD/downloads/paper-1.21.5-$LATEST_BUILD.jar
+          echo "eula=true" > eula.txt
+        fi
+        # Ensure server.properties exists & set offline mode
+        if [ ! -f server.properties ]; then
+          echo "online-mode=false" > server.properties
+        else
+          sed -i 's/^online-mode=.*/online-mode=false/' server.properties
+        fi
+
+    # --- Run Minecraft server ---
+    - name: Start Minecraft Server (5 hours then stop)
+      run: |
+        cd smp-data
+        echo "Starting Minecraft server..."
+        nohup java -Xms8G -Xmx14G -jar server.jar nogui > server.log 2>&1 &
+
+    # --- Stop Minecraft server ---
+    - name: Wait For 5 hours
+      run: |
+        sleep 18000
+        
+    # --- Stop Minecraft server ---
+    - name: Stop Minecraft Server
+      if: ${{ always() }}
+      run: |
+        pkill -f nohup
+        
+    # --- Auto-restart workflow ---
+    - name: Restart Workflow
+      if: ${{ always() }}
+      uses: benc-uk/workflow-dispatch@v1
+      with:
+        workflow: Minecraft Server 1.21.5
+        ref: main
+        token: ${{ secrets.GITHUB_TOKEN }}
