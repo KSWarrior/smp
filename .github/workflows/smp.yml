@@ -19,7 +19,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./smp-data
+        working-directory: smp-data
 
     steps:
       # --- Checkout repo ---
